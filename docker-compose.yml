@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  daily-migration:
+    build: .
+    container_name: dropkiller-daily-migration
+    restart: unless-stopped
+    environment:
+      # Database connections (required)
+      - OLD_DATABASE_URL=${OLD_DATABASE_URL}
+      - PRODUCTS_DATABASE_URL=${PRODUCTS_DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+
+      # Migration configuration (optional)
+      - TEST_MODE=${TEST_MODE:-false}
+      - WORKER_ID=${WORKER_ID:-docker-worker}
+      - MAX_RETRIES=${MAX_RETRIES:-3}
+      - RETRY_DELAY=${RETRY_DELAY:-60}
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "bun", "--version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    # Network
+    networks:
+      - migration-network
+
+  # Optional: Redis service for development
+  redis:
+    image: redis:7-alpine
+    container_name: dropkiller-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    networks:
+      - migration-network
+    profiles:
+      - dev # Only start with --profile dev
+
+networks:
+  migration-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+    driver: local
