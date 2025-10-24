@@ -6,11 +6,9 @@
   "type": "module",
   "scripts": {
     "start": "bun src/main.ts",
-    "migrate": "bun src/scripts/daily-migration-standalone.ts",
-    "migrate:complete": "bun src/scripts/complete-migration.ts",
-    "migrate:complete:test": "TEST_MODE=true bun src/scripts/complete-migration.ts",
-    "test": "TEST_MODE=true bun src/scripts/daily-migration-standalone.ts",
-    "dev": "bun --watch src/main.ts",
+    "migrate": "bun src/main.ts",
+    "migrate:test": "TEST_MODE=true bun src/main.ts",
+    "migrate:worker": "WORKER_ID=$WORKER_ID bun src/main.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/**/*.ts"
   },
