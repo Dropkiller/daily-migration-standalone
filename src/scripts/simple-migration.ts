@@ -10,7 +10,7 @@
  * 4. Migrar multimedia desde el campo gallery JSON
  */
 
-import { eq, and, inArray, ne } from "drizzle-orm";
+import { eq, and, inArray, ne, desc } from "drizzle-orm";
 import { productsDb } from "../db/config/products";
 import { oldDb } from "../db/config/old";
 import { getPlatformCountryId } from "../services/products";
@@ -429,11 +429,13 @@ async function main() {
     log(`Modo: ${TEST_MODE ? 'TEST (limitado)' : 'PRODUCCIÓN (completo)'}`);
 
     try {
-        // Obtener productos de la base vieja
+        // Obtener productos de la base vieja ordenados por fecha (más recientes primero)
+        // Esto ayuda a evitar duplicados y procesar productos actualizados
         let query = oldDb
             .select()
             .from(oldProduct)
-            .where(ne(oldProduct.platform, 'rocketfy')); // Excluir rocketfy
+            .where(ne(oldProduct.platform, 'rocketfy')) // Excluir rocketfy
+            .orderBy(desc(oldProduct.updatedAt)); // Ordenar por fecha de actualización descendente
 
         if (TEST_MODE) {
             query = query.limit(TEST_LIMIT);
@@ -449,6 +451,10 @@ async function main() {
         let historiesFilled = 0;
         let multimediaCreated = 0;
         let errors = 0;
+        let duplicatesSkipped = 0;
+
+        // Set para trackear UUIDs ya procesados en esta ejecución
+        const processedUUIDs = new Set<string>();
 
         // Procesar productos en lotes
         for (let i = 0; i < oldProducts.length; i += BATCH_SIZE) {
@@ -457,6 +463,16 @@ async function main() {
 
             for (const oldProd of batch) {
                 try {
+                    // Verificar si ya procesamos este UUID en esta ejecución
+                    if (processedUUIDs.has(oldProd.uuid)) {
+                        duplicatesSkipped++;
+                        log(`⏭️ Duplicate UUID skipped [UUID: ${oldProd.uuid}] - External ID: ${oldProd.externalId}`);
+                        continue;
+                    }
+
+                    // Marcar UUID como procesado
+                    processedUUIDs.add(oldProd.uuid);
+
                     // 1. Crear/actualizar proveedor
                     const providerId = await createOrUpdateProvider(oldProd);
                     if (providerId) providersCreated++;
@@ -501,6 +517,8 @@ async function main() {
 
         log(`🎉 Migration completed in ${duration.toFixed(1)} seconds`);
         log(`📊 Summary:`);
+        log(`   Total products found: ${oldProducts.length}`);
+        log(`   Duplicates skipped: ${duplicatesSkipped}`);
         log(`   Providers: ${providersCreated} processed`);
         log(`   Products: ${productsCreated} created, ${productsUpdated} updated`);
         log(`   Histories: ${historiesFilled} gaps filled`);
