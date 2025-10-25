@@ -113,22 +113,26 @@ export class SimpleMigration extends BaseMigration {
    */
   private loadProductUUIDs(): void {
     try {
-      const dataDir = path.join(process.cwd(), 'data');
+      const dataDir = path.join(process.cwd(), "data");
       const files = fs.readdirSync(dataDir);
-      const jsonFile = files.find(file => file.startsWith('product_') && file.endsWith('.json'));
+      const jsonFile = files.find(
+        (file) => file.startsWith("product_") && file.endsWith(".json")
+      );
 
       if (!jsonFile) {
-        throw new Error('No product JSON file found in data directory');
+        throw new Error("No product JSON file found in data directory");
       }
 
       const filePath = path.join(dataDir, jsonFile);
-      const fileContent = fs.readFileSync(filePath, 'utf8');
+      const fileContent = fs.readFileSync(filePath, "utf8");
       const products = JSON.parse(fileContent) as Array<{ uuid: string }>;
 
-      this.productUUIDs = products.map(p => p.uuid);
-      this.log(`Loaded ${this.productUUIDs.length} product UUIDs from ${jsonFile}`);
+      this.productUUIDs = products.map((p) => p.uuid);
+      this.log(
+        `Loaded ${this.productUUIDs.length} product UUIDs from ${jsonFile}`
+      );
     } catch (error) {
-      this.logError('Error loading product UUIDs from JSON:', error);
+      this.logError("Error loading product UUIDs from JSON:", error);
       throw error;
     }
   }
@@ -163,10 +167,16 @@ export class SimpleMigration extends BaseMigration {
 
     // Get UUIDs for this chunk
     const chunkSize = chunk.endOffset - chunk.startOffset;
-    let uuidsForChunk = this.productUUIDs.slice(chunk.startOffset, chunk.endOffset);
+    let uuidsForChunk = this.productUUIDs.slice(
+      chunk.startOffset,
+      chunk.endOffset
+    );
 
     if (TEST_MODE) {
-      uuidsForChunk = uuidsForChunk.slice(0, Math.min(TEST_LIMIT - chunk.startOffset, chunkSize));
+      uuidsForChunk = uuidsForChunk.slice(
+        0,
+        Math.min(TEST_LIMIT - chunk.startOffset, chunkSize)
+      );
     }
 
     if (uuidsForChunk.length === 0) {
@@ -893,11 +903,17 @@ export class SimpleMigration extends BaseMigration {
             await productsDb.insert(histories).values(batch);
             insertedCount += batch.length;
             console.log(
-              `[HISTORY] 📝 Batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(historiesToInsert.length/batchSize)} insertado (${insertedCount}/${historiesToInsert.length}) para producto: ${productData.externalId}`
+              `[HISTORY] 📝 Batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(
+                historiesToInsert.length / batchSize
+              )} insertado (${insertedCount}/${
+                historiesToInsert.length
+              }) para producto: ${productData.externalId}`
             );
           } catch (batchError) {
             console.warn(
-              `[HISTORY] ⚠️ Error insertando batch ${Math.floor(i/batchSize) + 1} para producto: ${productId}:`,
+              `[HISTORY] ⚠️ Error insertando batch ${
+                Math.floor(i / batchSize) + 1
+              } para producto: ${productId}:`,
               batchError
             );
             // Try individual inserts for this batch
@@ -970,15 +986,10 @@ export class SimpleMigration extends BaseMigration {
 
       // Crear registros de multimedia
       const multimediaItems = gallery
-        .filter(
-          (item: MediaItem) =>
-            item &&
-            (item.url  || item.ownImage)
-        )
+        .filter((item: MediaItem) => item && (item.url || item.ownImage))
         .map((item: MediaItem, index: number) => {
           // Priorizar las URLs en este orden: url > ownImage > sourceUrl > originalUrl
-          let url =
-            item.url || item.ownImage;
+          let url = item.url || item.ownImage;
 
           // Apply URL completion logic: SOLO concatenar si NO empieza con https://
           // Las URLs que ya tienen https:// se guardan tal cual
@@ -999,56 +1010,78 @@ export class SimpleMigration extends BaseMigration {
         });
 
         if (multimediaItems.length === 0) {
-          const updatedCount = await productsDb.update(multimedia)
-            .set({ id: crypto.randomUUID(), updatedAt: new Date().toISOString() })
-            .where(
-              eq(multimedia.productId, productId)
-            );
-
-          console.log(
-            `[MULTIMEDIA] ✅ Multimedia items uuid updated: ${updatedCount.rows.length} for product: ${productId}`
-          );
+          return 0;
         }
 
-      // Insert new multimedia items in batches
-      const batchSize = 20;
       let insertedCount = 0;
+        const existingItems = await productsDb
+          .select()
+          .from(multimedia)
+          .where(eq(multimedia.productId, productId));
 
-      for (let i = 0; i < multimediaItems.length; i += batchSize) {
-        const batch = multimediaItems.slice(i, i + batchSize);
-        try {
-          await productsDb.insert(multimedia).values(batch).onConflictDoUpdate({
-            target: multimedia.id,
-            set: {
-              id: crypto.randomUUID(),
-              type: multimedia.type,
-              url: multimedia.url,
-              originalUrl: multimedia.originalUrl,
-              updatedAt: multimedia.updatedAt,
-            },
-          });
-          insertedCount += batch.length;
-        } catch (batchError) {
-          console.warn(
-            `[MULTIMEDIA] ⚠️ Error insertando batch multimedia para producto: ${productData.externalId}:`,
-            batchError
-          );
-          // Try individual inserts for this batch
-          for (const item of batch) {
-            try {
-              await productsDb.insert(multimedia).values([item]);
-              insertedCount++;
-            } catch (itemError) {
-              console.warn(
-                `[MULTIMEDIA] ⚠️ Error insertando elemento multimedia individual para producto: ${productData.externalId}:`,
-                itemError
-              );
+      if (existingItems.length > 0) {
+        existingItems.forEach(async (item) => {
+          if (multimediaItems.some((newItem) => newItem.url === item.url)) {
+            await productsDb
+              .update(multimedia)
+              .set({
+                id: crypto.randomUUID(),
+                type: item.type,
+                url: item.url,
+                originalUrl: item.originalUrl,
+                updatedAt: new Date().toISOString(),
+              })
+              .where(eq(multimedia.id, item.id));
+          }
+        });
+
+        insertedCount = existingItems.length;
+        console.log(
+          `[MULTIMEDIA] ✅ Multimedia items updated: ${insertedCount} for product: ${productId}`
+        );
+        return insertedCount
+      } else {
+        // Insert new multimedia items in batches
+        const batchSize = 20;
+
+        for (let i = 0; i < multimediaItems.length; i += batchSize) {
+          const batch = multimediaItems.slice(i, i + batchSize);
+          try {
+            await productsDb
+              .insert(multimedia)
+              .values(batch)
+              .onConflictDoUpdate({
+                target: multimedia.id,
+                set: {
+                  id: crypto.randomUUID(),
+                  type: multimedia.type,
+                  url: multimedia.url,
+                  originalUrl: multimedia.originalUrl,
+                  updatedAt: multimedia.updatedAt,
+                },
+              });
+            insertedCount += batch.length;
+          } catch (batchError) {
+            console.warn(
+              `[MULTIMEDIA] ⚠️ Error insertando batch multimedia para producto: ${productId}:`,
+              batchError
+            );
+            // Try individual inserts for this batch
+            for (const item of batch) {
+              try {
+                await productsDb.insert(multimedia).values([item]);
+                insertedCount++;
+              } catch (itemError) {
+                console.warn(
+                  `[MULTIMEDIA] ⚠️ Error insertando elemento multimedia individual para producto: ${productId}:`,
+                  itemError
+                );
+              }
             }
           }
         }
+        return insertedCount;
       }
-
-      return insertedCount;
     } catch (error) {
       this.logError(
         `Error updating multimedia for product [UNIQUE_ID: ${productId}] - Platform: ${productData.platform}, Country: ${productData.country}:`,
