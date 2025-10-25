@@ -949,7 +949,7 @@ export class SimpleMigration extends BaseMigration {
     }
   }
 
-  /**
+  /**Ï
    * Migrar multimedia desde gallery JSON
    */
   private async migrateMultimedia(
@@ -1009,15 +1009,15 @@ export class SimpleMigration extends BaseMigration {
           };
         });
 
-        if (multimediaItems.length === 0) {
-          return 0;
-        }
+      if (multimediaItems.length === 0) {
+        return 0;
+      }
 
       let insertedCount = 0;
-        const existingItems = await productsDb
-          .select()
-          .from(multimedia)
-          .where(eq(multimedia.productId, productId));
+      const existingItems = await productsDb
+        .select()
+        .from(multimedia)
+        .where(eq(multimedia.productId, productId));
 
       if (existingItems.length > 0) {
         existingItems.forEach(async (item) => {
@@ -1039,7 +1039,7 @@ export class SimpleMigration extends BaseMigration {
         console.log(
           `[MULTIMEDIA] ✅ Multimedia items updated: ${insertedCount} for product: ${productId}`
         );
-        return insertedCount
+        return insertedCount;
       } else {
         // Insert new multimedia items in batches
         const batchSize = 20;
