@@ -5,13 +5,18 @@ import { Pool } from 'pg';
 
 const productsDbPool = new Pool({
     connectionString: env.PRODUCTS_DATABASE_URL,
-    max: 1,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 15000,
+    max: 5,
+    min: 1,
+    idleTimeoutMillis: 60000,
+    connectionTimeoutMillis: 30000,
 });
 
-productsDbPool.on('connect', () => {
+productsDbPool.on('connect', (client) => {
     console.log('Products DB: Connected successfully');
+    // Configure PostgreSQL timeouts directly
+    client.query('SET statement_timeout = 300000'); // 5 minutes
+    client.query('SET idle_in_transaction_session_timeout = 600000'); // 10 minutes
+    client.query('SET lock_timeout = 120000'); // 2 minutes
 });
 
 productsDbPool.on('error', (err) => {

@@ -6,9 +6,10 @@ import * as oldSchema from '../schemas/old';
 
 export const oldDbPool = new Pool({
     connectionString: env.OLD_DATABASE_URL,
-    max: 1,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 15000,
+    max: 3,
+    min: 1,
+    idleTimeoutMillis: 60000,
+    connectionTimeoutMillis: 30000,
 });
 
 oldDbPool.on('connect', () => {

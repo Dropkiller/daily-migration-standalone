@@ -11,7 +11,7 @@
  * 5. Procesamiento distribuido con múltiples workers
  */
 
-import { eq, and, inArray, ne, desc, like } from "drizzle-orm";
+import { eq, and, inArray, ne, desc, like, sql } from "drizzle-orm";
 import { productsDb } from "../db/config/products";
 import { oldDb } from "../db/config/old";
 import { getPlatformCountryId } from "../services/products";
@@ -520,7 +520,7 @@ export class SimpleMigration extends BaseMigration {
       }
     } catch (error) {
       this.logError(
-        `Error creating/updating provider for product ${productData.externalId}:`,
+        `Error creating/updating provider for product ${productData.externalId} ${productData.platform} ${productData.country}: `,
         error
       );
       // En caso de cualquier error, crear proveedor fallback
@@ -810,13 +810,13 @@ export class SimpleMigration extends BaseMigration {
 
       if (missingDates.length === 0) {
         console.log(
-          `[HISTORY] ✅ No hay fechas faltantes para producto: ${productData.externalId}`
+          `[HISTORY] ✅ No hay fechas faltantes para producto: ${productId}`
         );
         return 0;
       }
 
       console.log(
-        `[HISTORY] 📊 Fechas faltantes encontradas: ${missingDates.length} para producto: ${productData.externalId}`
+        `[HISTORY] 📊 Fechas faltantes encontradas: ${missingDates.length} para producto: ${productId}`
       );
 
       // Obtener datos históricos completos para las fechas faltantes
@@ -833,7 +833,7 @@ export class SimpleMigration extends BaseMigration {
         );
 
       console.log(
-        `[HISTORY] 📋 Datos históricos obtenidos: ${missingHistoriesData.length} registros para producto: ${productData.externalId}`
+        `[HISTORY] 📋 Datos históricos obtenidos: ${missingHistoriesData.length} registros para producto: ${productId}`
       );
 
       // Crear registros de historial ordenados por fecha
@@ -860,6 +860,9 @@ export class SimpleMigration extends BaseMigration {
           updatedAt: new Date().toISOString(),
         }));
 
+      // Track inserted count outside the block
+      let insertedCount = 0;
+
       // Update the last history record (most recent date) with current product stats
       if (historiesToInsert.length > 0) {
         const lastHistoryByDate =
@@ -878,21 +881,52 @@ export class SimpleMigration extends BaseMigration {
         }
 
         console.log(
-          `[HISTORY] 💾 Insertando ${historiesToInsert.length} registros de historial para producto: ${productData.externalId}`
+          `[HISTORY] 💾 Insertando ${historiesToInsert.length} registros de historial para producto: ${productId}`
         );
-        await productsDb.insert(histories).values(historiesToInsert);
+
+        // Insert in smaller batches to avoid connection timeouts
+        const batchSize = 50;
+
+        for (let i = 0; i < historiesToInsert.length; i += batchSize) {
+          const batch = historiesToInsert.slice(i, i + batchSize);
+          try {
+            await productsDb.insert(histories).values(batch);
+            insertedCount += batch.length;
+            console.log(
+              `[HISTORY] 📝 Batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(historiesToInsert.length/batchSize)} insertado (${insertedCount}/${historiesToInsert.length}) para producto: ${productData.externalId}`
+            );
+          } catch (batchError) {
+            console.warn(
+              `[HISTORY] ⚠️ Error insertando batch ${Math.floor(i/batchSize) + 1} para producto: ${productId}:`,
+              batchError
+            );
+            // Try individual inserts for this batch
+            for (const item of batch) {
+              try {
+                await productsDb.insert(histories).values([item]);
+                insertedCount++;
+              } catch (itemError) {
+                console.warn(
+                  `[HISTORY] ⚠️ Error insertando registro individual para producto: ${productData.externalId}, fecha: ${item.date}:`,
+                  itemError
+                );
+              }
+            }
+          }
+        }
+
         console.log(
-          `[HISTORY] ✅ Historial insertado exitosamente para producto: ${productData.externalId}`
+          `[HISTORY] ✅ Historial insertado exitosamente: ${insertedCount}/${historiesToInsert.length} registros para producto: ${productId}`
         );
       }
 
-      return historiesToInsert.length;
+      return insertedCount;
     } catch (error) {
       console.log(
-        `[HISTORY] ❌ Error procesando historial para producto: ${productData.externalId}`
+        `[HISTORY] ❌ Error procesando historial para producto: ${productId}`
       );
       this.logError(
-        `Error updating history for product [UNIQUE_ID: ${productData.externalId}] - Platform: ${productData.platform}, Country: ${productData.country}:`,
+        `Error updating history for product [UNIQUE_ID: ${productId}] - Platform: ${productData.platform}, Country: ${productData.country}:`,
         error
       );
       return 0;
@@ -965,25 +999,56 @@ export class SimpleMigration extends BaseMigration {
         });
 
         if (multimediaItems.length === 0) {
-          return 0;
+          const updatedCount = await productsDb.update(multimedia)
+            .set({ id: crypto.randomUUID(), updatedAt: new Date().toISOString() })
+            .where(
+              eq(multimedia.productId, productId)
+            );
+
+          console.log(
+            `[MULTIMEDIA] ✅ Multimedia items uuid updated: ${updatedCount.rows.length} for product: ${productId}`
+          );
         }
 
-      await productsDb
-        .insert(multimedia)
-        .values(multimediaItems)
-        .onConflictDoUpdate({
-          target: multimedia.productId,
-          set: {
-            id: multimedia.id,
-            type: multimedia.type,
-            url: multimedia.url,
-            originalUrl: multimedia.originalUrl,
-            updatedAt: new Date().toISOString(),
-            productId: multimedia.productId,
-          },
-        });
+      // Insert new multimedia items in batches
+      const batchSize = 20;
+      let insertedCount = 0;
 
-      return multimediaItems.length;
+      for (let i = 0; i < multimediaItems.length; i += batchSize) {
+        const batch = multimediaItems.slice(i, i + batchSize);
+        try {
+          await productsDb.insert(multimedia).values(batch).onConflictDoUpdate({
+            target: multimedia.id,
+            set: {
+              id: crypto.randomUUID(),
+              type: multimedia.type,
+              url: multimedia.url,
+              originalUrl: multimedia.originalUrl,
+              updatedAt: multimedia.updatedAt,
+            },
+          });
+          insertedCount += batch.length;
+        } catch (batchError) {
+          console.warn(
+            `[MULTIMEDIA] ⚠️ Error insertando batch multimedia para producto: ${productData.externalId}:`,
+            batchError
+          );
+          // Try individual inserts for this batch
+          for (const item of batch) {
+            try {
+              await productsDb.insert(multimedia).values([item]);
+              insertedCount++;
+            } catch (itemError) {
+              console.warn(
+                `[MULTIMEDIA] ⚠️ Error insertando elemento multimedia individual para producto: ${productData.externalId}:`,
+                itemError
+              );
+            }
+          }
+        }
+      }
+
+      return insertedCount;
     } catch (error) {
       this.logError(
         `Error updating multimedia for product [UNIQUE_ID: ${productId}] - Platform: ${productData.platform}, Country: ${productData.country}:`,
