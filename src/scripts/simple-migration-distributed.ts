@@ -728,14 +728,6 @@ export class SimpleMigration extends BaseMigration {
                 return 0;
             }
 
-            // Eliminar multimedia existente para este producto
-            await productsDb
-                .delete(multimedia)
-                .where(eq(multimedia.productId, productId));
-
-            if (gallery.length === 0) {
-                return 0;
-            }
 
             // Crear registros de multimedia
             const multimediaItems = gallery
@@ -763,7 +755,15 @@ export class SimpleMigration extends BaseMigration {
                 });
 
             if (multimediaItems.length > 0) {
-                await productsDb.insert(multimedia).values(multimediaItems);
+                await productsDb.insert(multimedia).values(multimediaItems).onConflictDoUpdate({
+                    target: multimedia.id,
+                    set: {
+                        type: multimedia.type,
+                        url: multimedia.url,
+                        originalUrl: multimedia.originalUrl,
+                        updatedAt: new Date().toISOString()
+                    }
+                });
             }
 
             return multimediaItems.length;
