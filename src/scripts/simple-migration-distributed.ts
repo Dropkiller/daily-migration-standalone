@@ -22,6 +22,8 @@ import {
   type ChunkResult,
   type MigrationConfig,
 } from "./BaseMigration";
+import * as fs from "fs";
+import * as path from "path";
 
 // Schemas
 import {
@@ -99,30 +101,52 @@ function mapPlatformToPlatformType(platform: string): PlatformType {
  */
 export class SimpleMigration extends BaseMigration {
   private processedUUIDs = new Set<string>();
+  private productUUIDs: string[] = [];
 
   constructor() {
     super(MIGRATION_CONFIG);
+    this.loadProductUUIDs();
+  }
+
+  /**
+   * Load product UUIDs from JSON file
+   */
+  private loadProductUUIDs(): void {
+    try {
+      const dataDir = path.join(process.cwd(), 'data');
+      const files = fs.readdirSync(dataDir);
+      const jsonFile = files.find(file => file.startsWith('product_') && file.endsWith('.json'));
+
+      if (!jsonFile) {
+        throw new Error('No product JSON file found in data directory');
+      }
+
+      const filePath = path.join(dataDir, jsonFile);
+      const fileContent = fs.readFileSync(filePath, 'utf8');
+      const products = JSON.parse(fileContent) as Array<{ uuid: string }>;
+
+      this.productUUIDs = products.map(p => p.uuid);
+      this.log(`Loaded ${this.productUUIDs.length} product UUIDs from ${jsonFile}`);
+    } catch (error) {
+      this.logError('Error loading product UUIDs from JSON:', error);
+      throw error;
+    }
   }
 
   /**
    * Obtener total de productos a migrar
    */
   protected async getTotalRecords(): Promise<number> {
-    this.log("Fetching ALL products from old database...");
+    this.log("Using product UUIDs from JSON file...");
 
     if (TEST_MODE) {
       this.log(`🧪 TEST MODE: Limited to ${TEST_LIMIT} products`);
-      return TEST_LIMIT;
+      return Math.min(TEST_LIMIT, this.productUUIDs.length);
     }
 
-    const result = await oldDb
-      .select({ count: oldProduct.uuid })
-      .from(oldProduct)
-      .where(ne(oldProduct.platform, "rocketfy"));
-
-    const count = result.length;
+    const count = this.productUUIDs.length;
     this.log(
-      `Found ${count} total products in old database${
+      `Found ${count} total products in JSON file${
         TEST_MODE ? " (TEST MODE)" : ""
       }`
     );
@@ -137,16 +161,39 @@ export class SimpleMigration extends BaseMigration {
       `Processing chunk ${chunk.chunkId} (offset ${chunk.startOffset}-${chunk.endOffset})`
     );
 
-    // Obtener productos para este chunk ordenados por fecha
-    let query = oldDb
+    // Get UUIDs for this chunk
+    const chunkSize = chunk.endOffset - chunk.startOffset;
+    let uuidsForChunk = this.productUUIDs.slice(chunk.startOffset, chunk.endOffset);
+
+    if (TEST_MODE) {
+      uuidsForChunk = uuidsForChunk.slice(0, Math.min(TEST_LIMIT - chunk.startOffset, chunkSize));
+    }
+
+    if (uuidsForChunk.length === 0) {
+      this.log(`No UUIDs to process for chunk ${chunk.chunkId}`);
+      return {
+        processed: 0,
+        providersCreated: 0,
+        productsCreated: 0,
+        productsUpdated: 0,
+        historiesFilled: 0,
+        multimediaCreated: 0,
+        duplicatesSkipped: 0,
+        errors: 0,
+      };
+    }
+
+    // Fetch products by UUIDs from old database
+    const products = await oldDb
       .select()
       .from(oldProduct)
-      .where(ne(oldProduct.platform, "rocketfy"))
-      .orderBy(desc(oldProduct.updatedAt))
-      .offset(chunk.startOffset)
-      .limit(chunk.endOffset - chunk.startOffset);
-
-    const products = await query;
+      .where(
+        and(
+          inArray(oldProduct.uuid, uuidsForChunk),
+          ne(oldProduct.platform, "rocketfy")
+        )
+      )
+      .orderBy(desc(oldProduct.updatedAt));
 
     let stats = {
       processed: 0,
