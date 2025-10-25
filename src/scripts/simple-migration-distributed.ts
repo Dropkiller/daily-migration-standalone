@@ -242,10 +242,16 @@ export class SimpleMigration extends BaseMigration {
                 return await this.createFallbackProvider(productData);
             }
             
-            const providerName = providerData.name || 'null';
-            const providerExternalId = providerData.externalId;
+            const providerName = providerData.name || providerData.provider_name || 'null';
+            const providerExternalId = providerData.externalId || providerData.external_id;
 
             console.log(`[DEBUG] Processing provider for product ${productData.externalId}: name=${providerName}, externalId=${providerExternalId}`);
+
+            // Si no hay externalId válido, crear proveedor fallback
+            if (!providerExternalId) {
+                console.log(`[DEBUG] No valid externalId for provider, creating fallback for product ${productData.externalId}`);
+                return await this.createFallbackProvider(productData);
+            }
 
             // Usar la función correcta para obtener platformCountryId
             const platformType = mapPlatformToPlatformType(productData.platform);
@@ -415,8 +421,8 @@ export class SimpleMigration extends BaseMigration {
                 throw new Error(`Cannot create fallback provider without valid platformCountryId`);
             }
 
-            const fallbackExternalId = `fallback_${productData.platform}_${productData.externalId}`;
-            const fallbackName = `Proveedor Fallback - ${productData.platform}`;
+            const fallbackExternalId =  productData.externalId;
+            const fallbackName = 'null';
 
             console.log(`[DEBUG] Creating fallback provider: externalId=${fallbackExternalId}, name=${fallbackName}`);
 
@@ -648,7 +654,7 @@ export class SimpleMigration extends BaseMigration {
             const historiesToInsert = missingHistoriesData
                 .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()) // Ordenar por fecha ascendente
                 .map(h => ({
-                    id: `${productId}_${h.date}`,
+                    id: crypto.randomUUID(),
                     date: h.date,
                     stock: h.stock || 0,
                     salePrice: h.salePrice || 0,
