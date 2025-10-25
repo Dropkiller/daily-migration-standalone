@@ -907,7 +907,7 @@ export class SimpleMigration extends BaseMigration {
           // Si ya tiene https://, se guarda sin modificar
 
           return {
-            id: `${productId}_media_${index}`,
+            id: crypto.randomUUID(),
             type: item.type || "image",
             url: url,
             originalUrl: url, // Misma URL después de procesarla
