@@ -939,12 +939,12 @@ export class SimpleMigration extends BaseMigration {
         .filter(
           (item: MediaItem) =>
             item &&
-            (item.url || item.originalUrl || item.ownImage || item.sourceUrl)
+            (item.url  || item.ownImage)
         )
         .map((item: MediaItem, index: number) => {
           // Priorizar las URLs en este orden: url > ownImage > sourceUrl > originalUrl
           let url =
-            item.url || item.ownImage || item.sourceUrl || item.originalUrl;
+            item.url || item.ownImage;
 
           // Apply URL completion logic: SOLO concatenar si NO empieza con https://
           // Las URLs que ya tienen https:// se guardan tal cual
@@ -964,16 +964,22 @@ export class SimpleMigration extends BaseMigration {
           };
         });
 
+        if (multimediaItems.length === 0) {
+          return 0;
+        }
+
       await productsDb
         .insert(multimedia)
         .values(multimediaItems)
         .onConflictDoUpdate({
-          target: multimedia.id,
+          target: multimedia.productId,
           set: {
+            id: multimedia.id,
             type: multimedia.type,
             url: multimedia.url,
             originalUrl: multimedia.originalUrl,
             updatedAt: new Date().toISOString(),
+            productId: multimedia.productId,
           },
         });
 
