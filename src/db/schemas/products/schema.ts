@@ -271,7 +271,6 @@ export enum PlatformType {
 export const Countries = {
 	PY: "PY",
 	CO: "CO",
-	CO1: "CO",
 	MX: "MX",
 	PA: "PA",
 	ES: "ES",
