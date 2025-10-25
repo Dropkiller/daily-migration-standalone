@@ -713,16 +713,16 @@ export class SimpleMigration extends BaseMigration {
         externalId: productData.externalId,
         name: productData.name || "Sin nombre",
         description: productData.description || undefined,
-        salePrice: productData.salePrice || 0,
-        suggestedPrice: productData.suggestedPrice || 0,
-        totalBilling: productData.totalSalesAmount || 0,
-        billingLast7Days: productData.salesLast7Days || 0,
-        billingLast30Days: productData.salesLast30Days || 0,
-        totalSoldUnits: productData.totalSoldUnits || 0,
-        soldUnitsLast7Days: productData.soldUnitsLast7Days || 0,
-        soldUnitsLast30Days: productData.soldUnitsLast30Days || 0,
-        stock: productData.stock || 0,
-        variationsAmount: productData.variationsAmount || 0,
+        salePrice: productData.salePrice,
+        suggestedPrice: productData.suggestedPrice,
+        totalBilling: productData.totalSalesAmount,
+        billingLast7Days: productData.salesLast7Days,
+        billingLast30Days: productData.salesLast30Days ,
+        totalSoldUnits: productData.totalSoldUnits,
+        soldUnitsLast7Days: productData.soldUnitsLast7Days,
+        soldUnitsLast30Days: productData.soldUnitsLast30Days,
+        stock: productData.stock,
+        variationsAmount: productData.variationsAmount,
         score: productData.score || 0,
         status: (productData.visible ? "ACTIVE" : "INACTIVE") as
           | "ACTIVE"
@@ -730,7 +730,7 @@ export class SimpleMigration extends BaseMigration {
         platformCountryId: platformCountryId,
         providerId: providerId,
         baseCategoryId: baseCategoryId,
-        createdAt: new Date().toISOString(),
+        createdAt: productData.createdAt,
         updatedAt: new Date().toISOString(),
       };
 
@@ -762,7 +762,9 @@ export class SimpleMigration extends BaseMigration {
             updatedAt: productPayload.updatedAt,
           })
           .where(eq(products.id, existingProduct[0].id));
-
+          this.log(
+            `[PRODUCT] 🔄 Actualizado producto: ${productId} (ID: ${productId})`
+          );
         return { productId, created: false };
       }
     } catch (error) {
