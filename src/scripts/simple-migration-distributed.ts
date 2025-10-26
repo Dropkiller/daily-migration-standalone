@@ -341,17 +341,17 @@ export class SimpleMigration extends BaseMigration {
           );
 
           // 4. Migrar multimedia
-          console.log(
-            `[MULTIMEDIA] 🖼️ Procesando multimedia para producto: ${oldProd.externalId}`
-          );
-          const multimediaCount = await this.migrateMultimedia(
-            oldProd,
-            productId
-          );
-          stats.multimediaCreated += multimediaCount;
-          console.log(
-            `[MULTIMEDIA] ✅ Multimedia procesada: ${multimediaCount} elementos para producto: ${oldProd.externalId}`
-          );
+          // console.log(
+          //   `[MULTIMEDIA] 🖼️ Procesando multimedia para producto: ${oldProd.externalId}`
+          // );
+          // const multimediaCount = await this.migrateMultimedia(
+          //   oldProd,
+          //   productId
+          // );
+          // stats.multimediaCreated += multimediaCount;
+          // console.log(
+          //   `[MULTIMEDIA] ✅ Multimedia procesada: ${multimediaCount} elementos para producto: ${oldProd.externalId}`
+          // );
 
           stats.processed++;
           console.log(
