@@ -259,6 +259,14 @@ export type ProductPlatform = typeof productPlatforms.$inferSelect;
 export type InsertProductPlatform = typeof productPlatforms.$inferInsert;
 export type InsertProductPlatformPartial = Partial<InsertProductPlatform>;
 
+export type BaseCategory = typeof baseCategories.$inferSelect;
+export type InsertBaseCategory = typeof baseCategories.$inferInsert;
+export type InsertBaseCategoryPartial = Partial<InsertBaseCategory>;
+
+export type PlatformCategory = typeof platformCategories.$inferSelect;
+export type InsertPlatformCategory = typeof platformCategories.$inferInsert;
+export type InsertPlatformCategoryPartial = Partial<InsertPlatformCategory>;
+
 export enum PlatformType {
 	DROPI = "dropi",
 	ALICLICK = "aliclick",

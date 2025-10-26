@@ -1,91 +1,160 @@
 import { and, eq, ilike } from "drizzle-orm";
-import crypto from "crypto";
 
 import { productsDb } from "../../db/config/products";
 import { baseCategories, platformCategories, PlatformType } from "../../db/schemas/products";
 
-const FALLBACK_BASE_CATEGORY_ID = "09ad0d8c-9f58-45f8-8168-935b890ee70b";
+// Fallback category ID para "otro" - categoria que debe existir en DB después del cleanup
+const FALLBACK_BASE_CATEGORY_ID = "04c74a18-91d5-499d-bfe5-9593ce825d7b";
 
-export const getBaseCategoryByName = async (name: string, platform?: PlatformType) => {
-    let baseCategoryId: string | undefined;
+// Cache en memoria para las categorías existentes (se carga una vez)
+let categoryCache: Map<string, string> | null = null;
 
-    // 1. Buscar primero en base_categories (exacto)
-    const [exactBaseCategory] = await productsDb.select().from(baseCategories)
-        .where(eq(baseCategories.name, name))
-        .execute();
-
-    if (exactBaseCategory) {
-        return exactBaseCategory.id;
+const loadCategoryCache = async (): Promise<Map<string, string>> => {
+    if (categoryCache) {
+        return categoryCache;
     }
 
-    // 2. Buscar en platform_categories (exacto) y obtener el baseCategoryId
-    if (platform) {
-        const platformCategoryId = await getPlatformCategoryByNameAndPlatform(name, platform);
-        if (platformCategoryId) {
-            const [platformCategory] = await productsDb.select().from(platformCategories)
-                .where(eq(platformCategories.id, platformCategoryId))
-                .execute();
+    console.log('🗂️ Cargando caché de categorías existentes en DB...');
 
-            if (platformCategory) {
-                return platformCategory.baseCategoryId;
+    // Cargar todas las categorías base existentes
+    const allCategories = await productsDb.select({
+        id: baseCategories.id,
+        name: baseCategories.name
+    }).from(baseCategories).execute();
+
+    categoryCache = new Map<string, string>();
+
+    for (const category of allCategories) {
+        // Guardar tanto el nombre exacto como variaciones normalizadas
+        const normalizedName = category.name.toLowerCase().trim();
+        categoryCache.set(category.name, category.id); // Nombre exacto
+        categoryCache.set(normalizedName, category.id); // Nombre normalizado
+    }
+
+    console.log(`✅ Caché cargado con ${allCategories.length} categorías existentes en DB`);
+    return categoryCache;
+};
+
+export const getBaseCategoryByName = async (name: string, platform?: PlatformType): Promise<string> => {
+    if (!name || typeof name !== 'string') {
+        console.log(`⚠️ Nombre de categoría inválido: "${name}", usando fallback`);
+        return FALLBACK_BASE_CATEGORY_ID;
+    }
+
+    const cache = await loadCategoryCache();
+    const normalizedInputName = name.toLowerCase().trim();
+
+    // 1. Búsqueda exacta (case sensitive)
+    if (cache.has(name)) {
+        return cache.get(name)!;
+    }
+
+    // 2. Búsqueda exacta normalizada (case insensitive)
+    if (cache.has(normalizedInputName)) {
+        return cache.get(normalizedInputName)!;
+    }
+
+    // 3. Buscar en platform_categories si se proporciona plataforma
+    if (platform) {
+        try {
+            const platformCategoryId = await getPlatformCategoryByNameAndPlatform(name, platform);
+            if (platformCategoryId) {
+                const [platformCategory] = await productsDb.select().from(platformCategories)
+                    .where(eq(platformCategories.id, platformCategoryId))
+                    .execute();
+
+                if (platformCategory) {
+                    return platformCategory.baseCategoryId;
+                }
             }
+        } catch (error) {
+            console.log(`⚠️ Error buscando en platform_categories: ${error}`);
         }
     }
 
-    // 3. Buscar con similitud en base_categories (case insensitive)
-    const [similarBaseCategory] = await productsDb.select().from(baseCategories)
-        .where(ilike(baseCategories.name, name))
-        .execute();
-
-    if (similarBaseCategory) {
-        return similarBaseCategory.id;
-    }
-
-    // 4. Buscar con similitud en platform_categories (case insensitive)
-    if (platform) {
-        const [similarPlatformCategory] = await productsDb.select().from(platformCategories)
-            .where(
-                and(
-                    eq(platformCategories.platformId, platform),
-                    ilike(platformCategories.name, name)
-                )
-            )
-            .execute();
-
-        if (similarPlatformCategory) {
-            return similarPlatformCategory.baseCategoryId;
+    // 4. Búsqueda parcial/fuzzy en categorías existentes
+    for (const [cachedName, categoryId] of cache.entries()) {
+        // Verificar si el nombre de entrada contiene el nombre de la categoría
+        if (normalizedInputName.includes(cachedName) || cachedName.includes(normalizedInputName)) {
+            console.log(`🔍 Categoría encontrada por similitud: "${name}" → "${cachedName}"`);
+            return categoryId;
         }
     }
 
-    // 5. Buscar categorías similares por palabras clave (busqueda parcial)
-    const searchTerm = `%${name.toLowerCase()}%`;
+    // 5. Mapeo especial para casos comunes (basado en tu output)
+    const specialMappings: Record<string, string> = {
+        'bienestar y salud': 'salud',
+        'vehiculo': 'vehiculos',
+        'cuidado personal': 'belleza',
+        'belleza  cuidado personal': 'belleza',
+        'libros': 'hogar',
+        'juegos': 'jugueteria',
+        'capilar': 'belleza',
+        'halloween': 'jugueteria',
+        'navidad': 'jugueteria',
+        'importados': 'otro',
+        'desarrollo': 'tecnologia'
+    };
 
-    const [partialBaseCategory] = await productsDb.select().from(baseCategories)
-        .where(ilike(baseCategories.name, searchTerm))
-        .execute();
-
-    if (partialBaseCategory) {
-        return partialBaseCategory.id;
+    const mappedCategory = specialMappings[normalizedInputName];
+    if (mappedCategory && cache.has(mappedCategory)) {
+        console.log(`🔄 Categoría mapeada: "${name}" → "${mappedCategory}"`);
+        return cache.get(mappedCategory)!;
     }
 
-    // 6. Buscar en platform_categories con búsqueda parcial
-    if (platform) {
-        const [partialPlatformCategory] = await productsDb.select().from(platformCategories)
-            .where(
-                and(
-                    eq(platformCategories.platformId, platform),
-                    ilike(platformCategories.name, searchTerm)
-                )
-            )
-            .execute();
+    // 6. Si no se encuentra nada, usar categoría fallback "otro"
+    console.log(`❌ Categoría "${name}" no encontrada, usando fallback "otro": ${FALLBACK_BASE_CATEGORY_ID}`);
+    return FALLBACK_BASE_CATEGORY_ID;
+}
 
-        if (partialPlatformCategory) {
-            return partialPlatformCategory.baseCategoryId;
+/**
+ * Validar si un baseCategoryId existe en las categorías válidas
+ * Para productos existentes que ya tienen baseCategoryId
+ */
+export const validateBaseCategoryId = async (categoryId: string): Promise<string> => {
+    if (!categoryId || typeof categoryId !== 'string') {
+        console.log(`⚠️ ID de categoría inválido: "${categoryId}", usando fallback`);
+        return FALLBACK_BASE_CATEGORY_ID;
+    }
+
+    const cache = await loadCategoryCache();
+
+    // Buscar en el cache si existe el ID en las categorías válidas
+    for (const [categoryName, cachedId] of cache.entries()) {
+        if (cachedId === categoryId) {
+            console.log(`✅ Categoría válida encontrada por ID: ${categoryId} (${categoryName})`);
+            return categoryId;
         }
     }
 
-    // 7. Si no se encuentra nada, usar categoría fallback
-    console.log(`Category ${name} not found, using fallback category ID: ${FALLBACK_BASE_CATEGORY_ID}`);
+    // Si el ID no existe en las categorías válidas, usar fallback
+    console.log(`❌ ID de categoría "${categoryId}" no es válido, usando fallback "otro": ${FALLBACK_BASE_CATEGORY_ID}`);
+    return FALLBACK_BASE_CATEGORY_ID;
+}
+
+/**
+ * Función principal que decide si buscar por ID o por nombre
+ * Usar para productos que pueden ser nuevos o existentes
+ */
+export const getValidBaseCategoryId = async (
+    existingCategoryId: string | null | undefined,
+    categoryName: string | null | undefined,
+    platform?: PlatformType
+): Promise<string> => {
+    // Si el producto ya tiene baseCategoryId, validarlo
+    if (existingCategoryId) {
+        console.log(`🔍 Producto existente - validando categoría por ID: ${existingCategoryId}`);
+        return await validateBaseCategoryId(existingCategoryId);
+    }
+
+    // Si es un producto nuevo, buscar por nombre
+    if (categoryName) {
+        console.log(`🔍 Producto nuevo - buscando categoría por nombre: "${categoryName}"`);
+        return await getBaseCategoryByName(categoryName, platform);
+    }
+
+    // Si no hay ni ID ni nombre, usar fallback
+    console.log(`⚠️ Sin ID ni nombre de categoría, usando fallback "otro"`);
     return FALLBACK_BASE_CATEGORY_ID;
 }
 
@@ -102,60 +171,6 @@ export const getPlatformCategoryByNameAndPlatform = async (name: string, platfor
     return category?.id;
 }
 
-export const createBaseCategory = async (name: string) => {
-    const newCategoryId = crypto.randomUUID();
-    const [insertedCategory] = await productsDb.insert(baseCategories).values({
-        id: newCategoryId,
-        name: name,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-    }).onConflictDoNothing().returning();
-
-    if (!insertedCategory) {
-        // Si no se insertó, buscar la categoría existente
-        const [existingCategory] = await productsDb.select().from(baseCategories)
-            .where(eq(baseCategories.name, name))
-            .execute();
-        
-        if (existingCategory) {
-            return existingCategory.id;
-        }
-        throw new Error(`Base category ${name} not created and not found`);
-    }
-
-    return newCategoryId;
-}
-
-export const createPlatformCategory = async (name: string, platform: PlatformType, baseCategoryId: string) => {
-    const newPlatformCategoryId = crypto.randomUUID();
-    const externalId = `${platform}_${name.toLowerCase().replace(/\s+/g, '_')}`;
-    
-    const [insertedCategory] = await productsDb.insert(platformCategories).values({
-        id: newPlatformCategoryId,
-        externalId: externalId,
-        name: name,
-        platformId: platform,
-        baseCategoryId: baseCategoryId,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-    }).onConflictDoNothing().returning();
-
-    if (!insertedCategory) {
-        // Si no se insertó, buscar la categoría existente
-        const [existingCategory] = await productsDb.select().from(platformCategories)
-            .where(
-                and(
-                    eq(platformCategories.externalId, externalId),
-                    eq(platformCategories.platformId, platform)
-                )
-            )
-            .execute();
-        
-        if (existingCategory) {
-            return existingCategory.id;
-        }
-        throw new Error(`Platform category ${name} not created and not found`);
-    }
-
-    return newPlatformCategoryId;
-}
+// ⚠️ FUNCIONES DE CREACIÓN ELIMINADAS
+// No se permiten crear nuevas categorías después del cleanup.
+// Solo se usan las 25 categorías existentes en la DB.

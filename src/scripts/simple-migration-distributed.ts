@@ -15,7 +15,7 @@ import { eq, and, inArray, ne, desc, like, sql } from "drizzle-orm";
 import { productsDb } from "../db/config/products";
 import { oldDb } from "../db/config/old";
 import { getPlatformCountryId } from "../services/products";
-import { getBaseCategoryByName } from "../services/products/categories";
+import { getValidBaseCategoryId } from "../services/products/categories";
 import {
   BaseMigration,
   type ChunkState,
@@ -65,6 +65,13 @@ interface MediaItem {
   externalProductId?: string;
 }
 
+// Constantes de hosts CloudFront por país
+const CLOUDFRONT_HOSTS = {
+  AR: "https://d33yjn72e20ec6.cloudfront.net/",
+  GT: "https://d2ob47cxeawi8a.cloudfront.net/",
+  DEFAULT: "https://d39ru7awumhhs2.cloudfront.net/", // CO y otros
+};
+
 // Configuration
 const TEST_MODE = process.env.TEST_MODE === "true";
 const TEST_LIMIT = 20;
@@ -94,6 +101,60 @@ function mapPlatformToPlatformType(platform: string): PlatformType {
       console.warn(`Unknown platform: ${platform}, defaulting to DROPI`);
       return PlatformType.DROPI;
   }
+}
+
+// Función de normalización de URLs
+function normalizeUrl(url: string, countryCode: string): string {
+  // Si ya tiene protocolo, retornar tal cual
+  if (url.startsWith("http://") || url.startsWith("https://")) {
+    return url;
+  }
+
+  // Determinar el host según código de país (2 letras)
+  const host = CLOUDFRONT_HOSTS[countryCode as keyof typeof CLOUDFRONT_HOSTS] || CLOUDFRONT_HOSTS.DEFAULT;
+
+  // Agregar host al path
+  return host + url.replace(/^\//, "");
+}
+
+// Función de extracción de URLs válidas del array gallery
+function extractValidUrls(galleryJson: any): string[] {
+  if (!galleryJson) {
+    console.log(`🔍 Gallery es null/undefined`);
+    return [];
+  }
+
+  let gallery;
+  try {
+    gallery =
+      typeof galleryJson === "string" ? JSON.parse(galleryJson) : galleryJson;
+  } catch (error: any) {
+    console.log(`🔍 Error parseando gallery: ${error.message}`);
+    return [];
+  }
+
+  if (!Array.isArray(gallery)) {
+    console.log(`🔍 Gallery no es array, es: ${typeof gallery}`);
+    return [];
+  }
+
+  console.log(`🔍 Gallery tiene ${gallery.length} elementos`);
+
+  const validUrls = gallery
+    .map((item, index) => {
+      // Solo usar el campo url
+      let selectedUrl = item.url;
+      if (!selectedUrl || selectedUrl === "URL_NOT_FOUND") {
+        console.log(`🔍 Item ${index}: URL inválida (${selectedUrl})`);
+        return null;
+      }
+      console.log(`🔍 Item ${index}: URL válida (${selectedUrl})`);
+      return selectedUrl;
+    })
+    .filter((url) => url !== null);
+
+  console.log(`🔍 URLs válidas extraídas: ${validUrls.length}`);
+  return validUrls;
 }
 
 /**
@@ -688,24 +749,39 @@ export class SimpleMigration extends BaseMigration {
       // Usar el UUID original del producto de la base vieja
       const productId = productData.uuid;
 
-      // Obtener categoría correcta
-      let baseCategoryId = "09ad0d8c-9f58-45f8-8168-935b890ee70b"; // Fallback
+      // Obtener categoría correcta usando la nueva lógica
+      let baseCategoryId: string;
       try {
+        // Verificar si el producto ya existe y tiene baseCategoryId
+        const existingCategoryId = existingProduct.length > 0 ? existingProduct[0].baseCategoryId : null;
+
+        // Obtener nombre de categoría del producto viejo
+        let categoryName: string | null = null;
         if (
           productData.categories &&
           Array.isArray(productData.categories) &&
           productData.categories.length > 0
         ) {
           const firstCategory = productData.categories[0] as CategoryData;
-          if (firstCategory && firstCategory.name) {
-            baseCategoryId = await getBaseCategoryByName(firstCategory.name);
-          }
+          categoryName = firstCategory?.name || null;
         }
+
+        baseCategoryId = await getValidBaseCategoryId(
+          existingCategoryId,
+          categoryName,
+          platformType
+        );
+
+        console.log(
+          `[CATEGORY] Categoría obtenida para ${productData.externalId}: ${baseCategoryId} (${existingCategoryId ? 'por ID' : 'por nombre'})`
+        );
       } catch (error) {
         console.warn(
           `Category error for product ${productData.externalId}, using fallback:`,
           error
         );
+        // Usar fallback de "otro" en caso de error
+        baseCategoryId = "04c74a18-91d5-499d-bfe5-9593ce825d7b";
       }
 
       const productPayload = {
@@ -951,117 +1027,123 @@ export class SimpleMigration extends BaseMigration {
     }
   }
 
-  /**Ï
-   * Migrar multimedia desde gallery JSON
+  /**
+   * Migrar multimedia desde gallery JSON usando la nueva lógica mejorada
    */
   private async migrateMultimedia(
     productData: OldProduct,
     productId: string
   ): Promise<number> {
     try {
-      if (!productData.gallery) {
+      const { uuid: productUuid, gallery, country } = productData;
+
+      // Extraer URLs válidas del gallery usando la nueva función
+      const validUrls = extractValidUrls(gallery);
+
+      if (validUrls.length === 0) {
+        console.log(`⚠️  [${productUuid}] Sin URLs válidas en gallery`);
         return 0;
       }
 
-      // El gallery viene como string JSON, necesitamos parsearlo
-      let gallery: MediaItem[];
-      if (typeof productData.gallery === "string") {
-        try {
-          const parsedGallery = JSON.parse(productData.gallery);
-          gallery = Array.isArray(parsedGallery)
-            ? parsedGallery
-            : [parsedGallery];
-        } catch (parseError) {
-          this.logError(
-            `Error parsing gallery JSON for product ${productData.externalId}:`,
-            parseError
-          );
-          return 0;
-        }
-      } else if (Array.isArray(productData.gallery)) {
-        gallery = productData.gallery as MediaItem[];
-      } else if (typeof productData.gallery === "object") {
-        gallery = [productData.gallery as MediaItem];
-      } else {
-        return 0;
-      }
+      console.log(
+        `✅ [${productUuid}] Producto existe, procesando ${validUrls.length} URLs`
+      );
 
-      // Crear registros de multimedia
-      const multimediaItems = gallery
-        .filter((item: MediaItem) => item && (item.url || item.ownImage))
-        .map((item: MediaItem, index: number) => {
-          // Priorizar las URLs en este orden: url > ownImage > sourceUrl > originalUrl
-          let url = item.url || item.ownImage;
-
-          // Apply URL completion logic: SOLO concatenar si NO empieza con https://
-          // Las URLs que ya tienen https:// se guardan tal cual
-          if (url && !url.startsWith("https://") && /^[a-z]+\//.test(url)) {
-            url = "https://d39ru7awumhhs2.cloudfront.net/" + url;
-          }
-          // Si ya tiene https://, se guarda sin modificar
-
-          return {
-            id: crypto.randomUUID(),
-            type: item.type || "image",
-            url: url,
-            originalUrl: url, // Misma URL después de procesarla
-            productId: productId,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          };
-        });
-
-      if (multimediaItems.length === 0) {
-        return 0;
-      }
-
-      let insertedCount = 0;
+      // Verificar si ya existen registros multimedia para este producto
       const existingItems = await productsDb
         .select()
         .from(multimedia)
         .where(eq(multimedia.productId, productId));
 
+      let updatedCount = 0;
+      let insertedCount = 0;
+
       if (existingItems.length > 0) {
-        existingItems.forEach(async (item) => {
-          if (multimediaItems.some((newItem) => newItem.url === item.url)) {
+        // Actualizar registros existentes solo actualizando originalUrl
+        for (let i = 0; i < Math.min(existingItems.length, validUrls.length); i++) {
+          const normalizedUrl = normalizeUrl(validUrls[i], country);
+          try {
             await productsDb
               .update(multimedia)
               .set({
-                id: crypto.randomUUID(),
-                type: item.type,
-                url: item.url,
-                originalUrl: item.originalUrl,
+                originalUrl: normalizedUrl,
                 updatedAt: new Date().toISOString(),
               })
-              .where(eq(multimedia.id, item.id));
+              .where(eq(multimedia.id, existingItems[i].id));
+            updatedCount++;
+          } catch (updateError) {
+            console.warn(
+              `[MULTIMEDIA] ⚠️ Error actualizando registro multimedia para producto: ${productId}:`,
+              updateError
+            );
           }
+        }
+
+        // Si hay más URLs que registros existentes, insertar los nuevos
+        if (validUrls.length > existingItems.length) {
+          const newUrls = validUrls.slice(existingItems.length);
+          const multimediaItems = newUrls.map((url) => {
+            const normalizedUrl = normalizeUrl(url, country);
+            return {
+              id: crypto.randomUUID(),
+              productId: productId,
+              originalUrl: normalizedUrl,
+              type: "image",
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            };
+          });
+
+          // Insertar en batches
+          const batchSize = 20;
+          for (let i = 0; i < multimediaItems.length; i += batchSize) {
+            const batch = multimediaItems.slice(i, i + batchSize);
+            try {
+              await productsDb.insert(multimedia).values(batch);
+              insertedCount += batch.length;
+            } catch (batchError) {
+              console.warn(
+                `[MULTIMEDIA] ⚠️ Error insertando batch multimedia para producto: ${productId}:`,
+                batchError
+              );
+              // Try individual inserts for this batch
+              for (const item of batch) {
+                try {
+                  await productsDb.insert(multimedia).values([item]);
+                  insertedCount++;
+                } catch (itemError) {
+                  console.warn(
+                    `[MULTIMEDIA] ⚠️ Error insertando elemento multimedia individual para producto: ${productId}:`,
+                    itemError
+                  );
+                }
+              }
+            }
+          }
+        }
+
+        console.log(`✅ [${productUuid}] Actualizadas ${updatedCount} URLs, insertadas ${insertedCount} URLs nuevas`);
+        return updatedCount + insertedCount;
+      } else {
+        // No hay registros existentes, insertar todos los nuevos
+        const multimediaItems = validUrls.map((url) => {
+          const normalizedUrl = normalizeUrl(url, country);
+          return {
+            id: crypto.randomUUID(),
+            productId: productId,
+            originalUrl: normalizedUrl,
+            type: "image",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
         });
 
-        insertedCount = existingItems.length;
-        console.log(
-          `[MULTIMEDIA] ✅ Multimedia items updated: ${insertedCount} for product: ${productId}`
-        );
-        return insertedCount;
-      } else {
-        // Insert new multimedia items in batches
+        // Insertar en batches
         const batchSize = 20;
-
         for (let i = 0; i < multimediaItems.length; i += batchSize) {
           const batch = multimediaItems.slice(i, i + batchSize);
           try {
-            await productsDb
-              .insert(multimedia)
-              .values(batch)
-              .onConflictDoUpdate({
-                target: multimedia.id,
-                set: {
-                  id: crypto.randomUUID(),
-                  type: multimedia.type,
-                  url: multimedia.url,
-                  originalUrl: multimedia.originalUrl,
-                  updatedAt: multimedia.updatedAt,
-                },
-              });
+            await productsDb.insert(multimedia).values(batch);
             insertedCount += batch.length;
           } catch (batchError) {
             console.warn(
@@ -1082,11 +1164,14 @@ export class SimpleMigration extends BaseMigration {
             }
           }
         }
+
+        console.log(`✅ [${productUuid}] Insertadas ${insertedCount} URLs nuevas`);
         return insertedCount;
       }
-    } catch (error) {
+    } catch (error: any) {
+      console.error(`❌ [${productData.uuid}] Error:`, error.message);
       this.logError(
-        `Error updating multimedia for product [UNIQUE_ID: ${productId}] - Platform: ${productData.platform}, Country: ${productData.country}:`,
+        `Error updating multimedia for product [UNIQUE_ID: ${productData.externalId}] - Platform: ${productData.platform}, Country: ${productData.country}:`,
         error
       );
       return 0;
