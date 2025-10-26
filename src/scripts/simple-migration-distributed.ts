@@ -337,21 +337,21 @@ export class SimpleMigration extends BaseMigration {
           const historiesCount = await this.fillHistoryGaps(oldProd, productId);
           stats.historiesFilled += historiesCount;
           console.log(
-            `[HISTORY] ✅ Historial procesado: ${historiesCount} registros agregados para producto: ${oldProd.externalId}`
+            `[HISTORY] ✅ Historial procesado: ${historiesCount} registros agregados para producto: ${productId}`
           );
 
           // 4. Migrar multimedia
-          // console.log(
-          //   `[MULTIMEDIA] 🖼️ Procesando multimedia para producto: ${oldProd.externalId}`
-          // );
-          // const multimediaCount = await this.migrateMultimedia(
-          //   oldProd,
-          //   productId
-          // );
-          // stats.multimediaCreated += multimediaCount;
-          // console.log(
-          //   `[MULTIMEDIA] ✅ Multimedia procesada: ${multimediaCount} elementos para producto: ${oldProd.externalId}`
-          // );
+          console.log(
+            `[MULTIMEDIA] 🖼️ Procesando multimedia para producto: ${productId}`
+          );
+          const multimediaCount = await this.migrateMultimedia(
+            oldProd,
+            productId
+          );
+          stats.multimediaCreated += multimediaCount;
+          console.log(
+            `[MULTIMEDIA] ✅ Multimedia procesada: ${multimediaCount} elementos para producto: ${productId}`
+          );
 
           stats.processed++;
           console.log(
@@ -365,10 +365,10 @@ export class SimpleMigration extends BaseMigration {
         } catch (error) {
           stats.errors++;
           console.log(
-            `[PRODUCT] ❌ Error crítico procesando producto: ${oldProd.externalId}`
+            `[PRODUCT] ❌ Error crítico procesando producto: ${oldProd.uuid}`
           );
           this.logError(
-            `Error processing product [UNIQUE_ID: ${oldProd.externalId}]:`,
+            `Error processing product [UNIQUE_ID: ${oldProd.uuid}]:`,
             error
           );
         }
