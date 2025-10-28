@@ -97,6 +97,8 @@ function mapPlatformToPlatformType(platform: string): PlatformType {
       return PlatformType.DROPLATAM;
     case "seventy block":
       return PlatformType.SEVENTY_BLOCK;
+    case "dropea":
+      return PlatformType.DROPEA;
     default:
       console.warn(`Unknown platform: ${platform}, defaulting to DROPI`);
       return PlatformType.DROPI;
@@ -451,12 +453,12 @@ export class SimpleMigration extends BaseMigration {
         countryCode = "CO";
       }
 
-      countryCode = countryCode as keyof typeof Countries;
+      const validCountryCode = countryCode as keyof typeof Countries;
 
       let platformCountryId: string;
       try {
         platformCountryId = await getPlatformCountryId({
-          countryCode: countryCode as keyof typeof Countries,
+          countryCode: validCountryCode,
           platformId: platformType,
         });
       } catch (error) {
@@ -510,6 +512,7 @@ export class SimpleMigration extends BaseMigration {
             .set({
               verified: providerData.verified || false,
               updatedAt: new Date().toISOString(),
+              platformCountryId: platformCountryId,
             })
             .where(eq(providers.id, existingProvider[0].id));
         } else {
@@ -520,6 +523,7 @@ export class SimpleMigration extends BaseMigration {
               externalId: providerExternalId,
               verified: providerData.verified || false,
               updatedAt: new Date().toISOString(),
+              platformCountryId: platformCountryId,
             })
             .where(eq(providers.id, existingProvider[0].id));
         }
@@ -548,6 +552,7 @@ export class SimpleMigration extends BaseMigration {
             .set({
               name: providerName, // Actualizar nombre si cambió
               verified: providerData.verified || false,
+              platformCountryId: platformCountryId,
               updatedAt: new Date().toISOString(),
             })
             .where(eq(providers.id, existingByExternalId[0].id));
@@ -614,12 +619,12 @@ export class SimpleMigration extends BaseMigration {
         countryCode = "CO";
       }
 
-      countryCode = countryCode as keyof typeof Countries;
+      const validCountryCode = countryCode as keyof typeof Countries;
 
       let platformCountryId: string;
       try {
         platformCountryId = await getPlatformCountryId({
-          countryCode: countryCode as keyof typeof Countries,
+          countryCode: validCountryCode,
           platformId: platformType,
         });
       } catch (error) {
@@ -723,12 +728,12 @@ export class SimpleMigration extends BaseMigration {
         countryCode = "CO";
       }
 
-      countryCode = countryCode as keyof typeof Countries;
+      const validCountryCode = countryCode as keyof typeof Countries;
 
       let platformCountryId: string;
       try {
         platformCountryId = await getPlatformCountryId({
-          countryCode: countryCode as keyof typeof Countries,
+          countryCode: validCountryCode,
           platformId: platformType,
         });
       } catch (error) {
@@ -835,6 +840,7 @@ export class SimpleMigration extends BaseMigration {
             status: productPayload.status,
             providerId: productPayload.providerId,
             baseCategoryId: productPayload.baseCategoryId,
+            platformCountryId: productPayload.platformCountryId, // Actualizar platformCountryId
             updatedAt: productPayload.updatedAt,
           })
           .where(eq(products.id, existingProduct[0].id));
